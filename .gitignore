@@ -67,16 +67,12 @@ venv.bak/
 .idea/
 .vscode/
 
-# Project-specific large files and directories
-/input/*
-!/input/placeholder/
-/processed_output/*
-!/processed_output/placeholder/
+# Project-specific large files
+# Allow CSV files but exclude media files
 *.mp4
 *.avi
 *.mov
 *.mkv
-debug.log
 *.png
 *.jpg
 *.jpeg
