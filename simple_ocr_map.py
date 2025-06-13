@@ -1111,8 +1111,23 @@ def is_timestamp_in_periods(timestamp_us, frame_ranges, fps):
     
     return is_frame_in_periods(frame_num, frame_ranges)
 
-def extract_text_from_video(video_path, frame_interval=5, max_frames=None, frame_ranges=None):
-    """Extract text from video frames using Apple Vision Framework with threading."""
+def extract_text_from_video(video_path, frame_interval=5, max_frames=None, frame_ranges=None, chunk_size=None):
+    """Extract text from video frames using Apple Vision Framework with threading.
+
+    Parameters
+    ----------
+    video_path : str
+        Path to the video file.
+    frame_interval : int, optional
+        Interval between frames to sample.
+    max_frames : int or None, optional
+        Maximum number of frames to process.
+    frame_ranges : list or None, optional
+        Specific frame ranges to process.
+    chunk_size : int or None, optional
+        Maximum number of frames to load and process at once. If ``None`` a
+        dynamic value will be selected based on resolution and sampling rate.
+    """
     print(f"Extracting text from video {video_path} (interval: {frame_interval})...")
     
     # Force garbage collection at the beginning
@@ -1214,12 +1229,18 @@ def extract_text_from_video(video_path, frame_interval=5, max_frames=None, frame
         # Limit to max frames with evenly distributed sampling
         step = len(frames_to_sample) // max_frames
         frames_to_sample = frames_to_sample[::step][:max_frames]
-    
+
     print(f"Processing {len(frames_to_sample)} frames")
-    
-    # Maximum number of frames to load at once to limit memory usage
-    max_frames_at_once = min(500, len(frames_to_sample))  # Reduce max frames at once
-    
+
+    # Determine maximum frames to load at once
+    if chunk_size is not None:
+        max_frames_at_once = min(chunk_size, len(frames_to_sample))
+    else:
+        max_frames_at_once = min(500, len(frames_to_sample))
+        # For high-resolution or dense sampling, reduce further
+        if frame_interval <= 2 or should_resize:
+            max_frames_at_once = min(100, len(frames_to_sample))
+
     # Process frames in chunks to manage memory
     all_results = []
     chunk_size = max_frames_at_once
@@ -1562,6 +1583,7 @@ def main():
     parser.add_argument("--no-adaptive", action="store_true", help="Disable adaptive batch sizing")
     parser.add_argument("--no-cache", action="store_true", help="Disable frame result caching")
     parser.add_argument("--no-parallel", action="store_true", help="Disable parallel image preprocessing")
+    parser.add_argument("--chunk-size", type=int, help="Maximum frames to process at once", default=None)
     
     args = parser.parse_args()
     
@@ -1624,6 +1646,7 @@ def process_with_args(args, progress_callback=None):
     max_frames = args.get('max_frames')
     time_periods_str = args.get('time_periods')
     encoding = args.get('encoding') or 'utf-8'
+    chunk_size = args.get('chunk_size')
     
     try:
         # Update global configuration first - this fixes the "used prior to global declaration" error
@@ -1655,6 +1678,7 @@ def process_with_args(args, progress_callback=None):
         print(f"In-memory processing: {'Enabled' if USE_IN_MEMORY_PROCESSING else 'Disabled'}")
         print(f"OCR batch size: {OCR_BATCH_SIZE}")
         print(f"GPU memory limit: {GPU_MEMORY_LIMIT_MB} MB")
+        print(f"Chunk size: {chunk_size if chunk_size else 'auto'}")
         if time_periods_str:
             print(f"Time periods: {', '.join(time_periods_str)}")
         print(f"Using {MAX_THREADS} threads for processing")
@@ -1747,7 +1771,12 @@ def process_with_args(args, progress_callback=None):
                 return
         
         # Extract text from video frames
-        ocr_data = extract_text_from_video(video_path, frame_interval, frame_ranges=frame_ranges)
+        ocr_data = extract_text_from_video(
+            video_path,
+            frame_interval,
+            frame_ranges=frame_ranges,
+            chunk_size=chunk_size
+        )
         if ocr_data is None or ocr_data.empty:
             print("No text detected in video frames")
             return
