@@ -25,6 +25,14 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
+# Import psutil for memory tracking
+try:
+    import psutil
+    HAS_PSUTIL = True
+except ImportError:
+    HAS_PSUTIL = False
+    print("Warning: psutil not available, memory tracking will be disabled")
+
 # Try importing jieba for Chinese word segmentation
 try:
     import jieba
@@ -74,7 +82,7 @@ WORD_LEVEL_RECOGNITION = True  # Flag to enable word-level recognition
 ENGLISH_WORD_MIN_LENGTH = 2  # Minimum length for English words
 CHINESE_WORD_MIN_LENGTH = 1  # Minimum length for Chinese words
 
-# Performance tracking
+# Performance tracking - Enhanced logging system
 perf_stats = {
     "ocr_time": 0,
     "frame_processing_time": 0,
@@ -87,8 +95,121 @@ perf_stats = {
     "last_processing_speed": 0,  # Track the last processing speed
     "cache_hits": 0,  # Count cache hits
     "cache_misses": 0,  # Count cache misses
-    "preprocessing_time": 0  # Track preprocessing time
+    "preprocessing_time": 0,  # Track preprocessing time
+    # Enhanced metrics
+    "frame_extraction_time": 0,
+    "frame_loading_time": 0,
+    "gaze_loading_time": 0,
+    "gaze_mapping_time": 0,
+    "text_categorization_time": 0,
+    "result_saving_time": 0,
+    "memory_usage_mb": [],
+    "ocr_batch_times": [],
+    "frame_times": [],
+    "words_recognized": 0,
+    "total_gaze_points": 0,
+    "mapped_gaze_points": 0,
+    "start_time": 0,
+    "end_time": 0
 }
+
+# Enhanced logging utility functions
+def log_performance(stage, duration, extra_info=""):
+    """Log performance metrics with consistent formatting."""
+    logger.info(f"⏱️  {stage}: {duration:.2f}s {extra_info}")
+
+def log_memory():
+    """Log current memory usage."""
+    if not HAS_PSUTIL:
+        return 0
+    process = psutil.Process()
+    mem_mb = process.memory_info().rss / 1024 / 1024
+    perf_stats["memory_usage_mb"].append(mem_mb)
+    return mem_mb
+
+def log_progress(current, total, stage, start_time):
+    """Log progress with estimated time remaining."""
+    if total > 0:
+        pct = (current / total) * 100
+        elapsed = time.time() - start_time
+        if current > 0:
+            eta = (elapsed / current) * (total - current)
+            logger.info(f"📊 {stage}: {current}/{total} ({pct:.1f}%) | Elapsed: {elapsed:.1f}s | ETA: {eta:.1f}s")
+        else:
+            logger.info(f"📊 {stage}: {current}/{total} ({pct:.1f}%)")
+
+def print_performance_summary():
+    """Print comprehensive performance summary."""
+    logger.info("\n" + "="*80)
+    logger.info("📈 PERFORMANCE SUMMARY")
+    logger.info("="*80)
+
+    total_time = perf_stats.get("end_time", 0) - perf_stats.get("start_time", 0)
+    if total_time > 0:
+        logger.info(f"⏱️  Total Pipeline Time: {total_time:.2f}s")
+        logger.info("")
+
+    # Breakdown by stage
+    logger.info("🔍 Stage Breakdown:")
+    stages = [
+        ("Gaze Data Loading", "gaze_loading_time"),
+        ("Frame Extraction", "frame_extraction_time"),
+        ("Frame Loading", "frame_loading_time"),
+        ("Preprocessing", "preprocessing_time"),
+        ("OCR Processing", "ocr_time"),
+        ("Text Categorization", "text_categorization_time"),
+        ("Gaze Mapping", "gaze_mapping_time"),
+        ("Result Saving", "result_saving_time")
+    ]
+
+    for stage_name, key in stages:
+        t = perf_stats.get(key, 0)
+        if t > 0:
+            pct = (t / total_time * 100) if total_time > 0 else 0
+            logger.info(f"  {stage_name:.<30} {t:>8.2f}s ({pct:>5.1f}%)")
+
+    logger.info("")
+    logger.info("📊 Processing Statistics:")
+    logger.info(f"  Total Frames Processed: {perf_stats.get('total_frames', 0)}")
+    logger.info(f"  Total OCR Calls: {perf_stats.get('total_ocr_calls', 0)}")
+    logger.info(f"  Words Recognized: {perf_stats.get('words_recognized', 0)}")
+    logger.info(f"  Gaze Points (Total): {perf_stats.get('total_gaze_points', 0)}")
+    logger.info(f"  Gaze Points (Mapped): {perf_stats.get('mapped_gaze_points', 0)}")
+
+    if perf_stats.get('total_gaze_points', 0) > 0:
+        map_rate = perf_stats['mapped_gaze_points'] / perf_stats['total_gaze_points'] * 100
+        logger.info(f"  Mapping Success Rate: {map_rate:.1f}%")
+
+    logger.info("")
+    logger.info("🚀 Performance Metrics:")
+    if perf_stats.get('ocr_time', 0) > 0 and perf_stats.get('total_frames', 0) > 0:
+        fps = perf_stats['total_frames'] / perf_stats['ocr_time']
+        logger.info(f"  OCR Processing Speed: {fps:.2f} fps")
+
+    if perf_stats.get('cache_hits', 0) + perf_stats.get('cache_misses', 0) > 0:
+        total_cache = perf_stats['cache_hits'] + perf_stats['cache_misses']
+        hit_rate = perf_stats['cache_hits'] / total_cache * 100
+        logger.info(f"  Cache Hit Rate: {hit_rate:.1f}% ({perf_stats['cache_hits']}/{total_cache})")
+
+    if perf_stats.get('batch_processing_times'):
+        logger.info(f"  Final Batch Size: {perf_stats.get('last_batch_size', 0)}")
+        logger.info(f"  Final Processing Speed: {perf_stats.get('last_processing_speed', 0):.2f} fps")
+
+    logger.info("")
+    if perf_stats.get('memory_usage_mb'):
+        avg_mem = sum(perf_stats['memory_usage_mb']) / len(perf_stats['memory_usage_mb'])
+        max_mem = max(perf_stats['memory_usage_mb'])
+        logger.info("💾 Memory Usage:")
+        logger.info(f"  Average: {avg_mem:.2f} MB")
+        logger.info(f"  Peak: {max_mem:.2f} MB")
+
+    if HAS_METAL and perf_stats.get('gpu_time', 0) > 0:
+        logger.info("")
+        logger.info("🎮 GPU Statistics:")
+        logger.info(f"  GPU Time: {perf_stats['gpu_time']:.2f}s")
+        logger.info(f"  GPU Memory Peak: {perf_stats['gpu_memory_peak']:.2f} MB")
+
+    logger.info("="*80 + "\n")
 
 # Frame cache for avoiding redundant OCR (simple LRU cache)
 frame_cache = {}  # Maps frame_num_hash -> OCR results
@@ -1702,12 +1823,22 @@ def process_with_args(args, progress_callback=None):
             if time_periods_str and len(time_periods_str) == 1:
                 print(f"Processing single time period: {time_periods_str[0]}")
         
+        # Initialize performance tracking
+        perf_stats["start_time"] = time.time()
+        logger.info("\n🚀 Starting Eye-Tracking to Text Mapping Pipeline\n")
+        log_memory()
+
         # Load eye-tracking data
+        t_start = time.time()
         gaze_data = load_eye_tracking_data(csv_path)
+        perf_stats["gaze_loading_time"] = time.time() - t_start
+        log_performance("Gaze Data Loading", perf_stats["gaze_loading_time"], f"({len(gaze_data)} points)" if gaze_data is not None and not gaze_data.empty else "")
+        perf_stats["total_gaze_points"] = len(gaze_data) if gaze_data is not None else 0
+
         if gaze_data is None or gaze_data.empty:
             print("No valid eye-tracking data to process")
             return
-        
+
         # Update progress
         if progress_callback:
             if not progress_callback(5, 100):  # 5% progress after loading gaze data
@@ -1771,15 +1902,24 @@ def process_with_args(args, progress_callback=None):
                 return
         
         # Extract text from video frames
+        t_start = time.time()
+        logger.info(f"\n📹 Starting OCR processing (interval={frame_interval})...")
         ocr_data = extract_text_from_video(
             video_path,
             frame_interval,
             frame_ranges=frame_ranges,
             chunk_size=chunk_size
         )
+        perf_stats["frame_extraction_time"] = time.time() - t_start
+
         if ocr_data is None or ocr_data.empty:
             print("No text detected in video frames")
             return
+
+        perf_stats["words_recognized"] = len(ocr_data)
+        log_performance("OCR Processing", perf_stats["frame_extraction_time"],
+                       f"({perf_stats['total_frames']} frames, {perf_stats['words_recognized']} words)")
+        log_memory()
         
         if debug and not ocr_data.empty:
             print("Sample of OCR data:")
@@ -1792,18 +1932,30 @@ def process_with_args(args, progress_callback=None):
                 return
         
         # Categorize text entries
+        t_start = time.time()
         ocr_data = categorize_text_entries(ocr_data)
-        
+        perf_stats["text_categorization_time"] = time.time() - t_start
+        log_performance("Text Categorization", perf_stats["text_categorization_time"])
+
         # Update progress
         if progress_callback:
             if not progress_callback(75, 100):  # 75% progress after categorization
                 return
-        
+
         # Map gaze points to text
+        t_start = time.time()
+        logger.info(f"\n🎯 Mapping gaze points to text (conf≥{conf_threshold}%, dist≤{distance_threshold}px)...")
         mapped_data = map_gaze_to_text_optimized(gaze_data, ocr_data, conf_threshold, distance_threshold, frame_ranges, fps)
+        perf_stats["gaze_mapping_time"] = time.time() - t_start
+
         if mapped_data is None or mapped_data.empty:
             print("No gaze points could be mapped to text")
             return
+
+        perf_stats["mapped_gaze_points"] = len(mapped_data)
+        log_performance("Gaze Mapping", perf_stats["gaze_mapping_time"],
+                       f"({perf_stats['mapped_gaze_points']} mapped)")
+        log_memory()
         
         # Update progress
         if progress_callback:
@@ -1811,23 +1963,32 @@ def process_with_args(args, progress_callback=None):
                 return
         
         # Save mapped data to CSV
+        t_start = time.time()
         mapped_data.to_csv(output_file, index=False)
         print(f"Saved {len(mapped_data)} mapped gaze points to {output_file}")
-        
+
         # Save OCR results for reference
         ocr_data.to_csv("ocr_results.csv", index=False)
         print(f"Saved {len(ocr_data)} OCR results to ocr_results.csv")
-        
+        perf_stats["result_saving_time"] = time.time() - t_start
+        log_performance("Result Saving", perf_stats["result_saving_time"])
+
         # Update progress
         if progress_callback:
             progress_callback(100, 100)  # 100% progress when done
-        
+
+        # Finalize performance tracking
+        perf_stats["end_time"] = time.time()
+
         print("\nMapping process completed successfully")
-        
+
+        # Print comprehensive performance summary
+        print_performance_summary()
+
         # Stop preprocessing workers if they were used
         if PARALLEL_IMAGE_PROCESSING:
             stop_preprocessing_workers()
-        
+
         return True
         
     except Exception as e:
